@@ -1,0 +1,3 @@
+- [x] R1 Inspect the requested behavior.
+- [~] R2 Implement the report.
+- [ ] R3 Verify the report in the real application.

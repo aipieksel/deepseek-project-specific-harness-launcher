@@ -1,0 +1,4 @@
+# Overlay: load the local Files-tree explorer plugin after the web bundle.
+- insert:
+    - id: files-explorer
+      name: dsh-files-explorer

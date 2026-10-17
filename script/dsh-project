@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dock / LaunchServices apps get a stripped PATH. Homebrew Node lives outside it.
+PATH="/opt/homebrew/bin:/usr/local/bin:${HOME}/.local/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+export PATH
+
+launcher_root="$(cd "$(dirname "$(realpath "$0")")/.." && pwd -P)"
+runtime="${DSH_RUNTIME:-${HOME}/.local/share/deepseek-harness/runtime}"
+registry="${HOME}/.local/share/deepseek-harness/projects/projects.tsv"
+base_state="${HOME}/.local/share/deepseek-harness/projects"
+dsh_bin="${runtime}/node_modules/.bin/dsh"
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  dsh-project <project-name-or-path> [--port PORT] [--host HOST] [--open] [--no-token] [-- <extra dsh web args>]
+  dsh-project --list
+
+Examples:
+  dsh-project agentic-editor
+  dsh-project /path/to/project --port 3186
+USAGE
+}
+
+slugify() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+seed_workspace() {
+  local state_dir="$1"
+  local project_path="$2"
+  local storage_dir="${state_dir}/storages"
+  local workspace_json="${storage_dir}/workspace.json"
+
+  mkdir -p "$storage_dir"
+
+  WORKSPACE_JSON="$workspace_json" PROJECT_PATH="$project_path" node <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const file = process.env.WORKSPACE_JSON;
+const projectPath = fs.realpathSync(process.env.PROJECT_PATH);
+const title = path.basename(projectPath) || projectPath;
+
+function emptyDocument() {
+  return {
+    unit: { name: "workspace", version: 2 },
+    global: { initialized: true, workspaceIds: [], archivedSessionIds: [] },
+    tables: { workspaces: {} },
+  };
+}
+
+function assertWorkspaceDocument(document) {
+  if (document === null || typeof document !== "object" || Array.isArray(document)) {
+    throw new Error("workspace storage is not a JSON object");
+  }
+  if (
+    document.unit?.name !== "workspace"
+    || document.unit?.version !== 2
+  ) {
+    throw new Error("workspace storage has an unexpected unit header");
+  }
+  document.global ??= {};
+  document.tables ??= {};
+  document.tables.workspaces ??= {};
+  if (document.tables.workspaces === null || typeof document.tables.workspaces !== "object" || Array.isArray(document.tables.workspaces)) {
+    throw new Error("workspace storage workspaces table is not an object");
+  }
+  if (!Array.isArray(document.global.workspaceIds)) document.global.workspaceIds = [];
+  if (!Array.isArray(document.global.archivedSessionIds)) document.global.archivedSessionIds = [];
+}
+
+let document;
+try {
+  document = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+  document = emptyDocument();
+}
+assertWorkspaceDocument(document);
+
+let changed = false;
+const records = document.tables.workspaces;
+let workspaceId = Object.entries(records)
+  .find(([, record]) => record && typeof record === "object" && record.path === projectPath)
+  ?.[0];
+
+if (workspaceId === undefined) {
+  workspaceId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  records[workspaceId] = {
+    path: projectPath,
+    title,
+    sessionIds: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  changed = true;
+}
+
+if (!document.global.workspaceIds.includes(workspaceId)) {
+  document.global.workspaceIds = [
+    workspaceId,
+    ...document.global.workspaceIds.filter((id) => records[id] !== undefined),
+  ];
+  changed = true;
+}
+
+if (document.global.initialized !== true) {
+  document.global.initialized = true;
+  changed = true;
+}
+
+if (changed) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+NODE
+}
+
+lookup_project() {
+  local wanted="$1"
+  awk -F '\t' -v wanted="$wanted" '
+    /^[[:space:]]*($|#)/ { next }
+    $1 == wanted { print $1 "\t" $2 "\t" $3; found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$registry"
+}
+
+if [[ ! -x "$dsh_bin" ]]; then
+  printf 'DeepSeek Harness is not installed at %s\n' "$dsh_bin" >&2
+  printf 'Run: npm install --prefix %q\n' "$runtime" >&2
+  exit 127
+fi
+
+invoked_name=$(basename "$0")
+if [[ "$invoked_name" == dsh-* && "$invoked_name" != "dsh-project" ]]; then
+  set -- "${invoked_name#dsh-}" "$@"
+fi
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 2
+fi
+
+if [[ ${1:-} == "--list" ]]; then
+  awk -F '\t' '
+    /^[[:space:]]*($|#)/ { next }
+    NF >= 3 { printf "%-30s %-6s %s\n", $1, $3, $2 }
+  ' "$registry"
+  exit 0
+fi
+
+if [[ ${1:-} == "--config" ]]; then
+  printf '%s\n' "$registry"
+  exit 0
+fi
+
+target="$1"
+shift
+host="127.0.0.1"
+port=""
+open_browser="0"
+no_token="0"
+extra_args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --host)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      host="$2"
+      shift 2
+      ;;
+    --port)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      port="$2"
+      shift 2
+      ;;
+    --open)
+      open_browser="1"
+      shift
+      ;;
+    --no-token)
+      no_token="1"
+      shift
+      ;;
+    --)
+      shift
+      extra_args=("$@")
+      break
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -d "$target" ]]; then
+  project_path=$(cd "$target" && pwd -P)
+  project_slug=$(slugify "$(basename "$project_path")")
+  default_port=""
+else
+  row=$(lookup_project "$target") || {
+    printf 'Unknown project name or path: %s\n\n' "$target" >&2
+    usage
+    printf '\nRegistered projects:\n' >&2
+    "$0" --list >&2
+    exit 2
+  }
+  IFS=$'\t' read -r project_slug project_path default_port <<<"$row"
+fi
+
+if [[ ! -d "$project_path" ]]; then
+  printf 'Project path does not exist: %s\n' "$project_path" >&2
+  exit 1
+fi
+project_path=$(cd "$project_path" && pwd -P)
+
+if [[ -z "$port" ]]; then
+  port="$default_port"
+fi
+if [[ -z "$port" ]]; then
+  port="3081"
+fi
+if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+  printf 'Invalid port: %s\n' "$port" >&2
+  exit 2
+fi
+
+state_dir="${base_state}/${project_slug}/state"
+mkdir -p "$state_dir"
+seed_workspace "$state_dir" "$project_path"
+
+agents_pro_dir="${launcher_root}/plugins/dsh-agents-pro"
+agents_pro_patch="${agents_pro_dir}/cordis.patch.yml"
+if [[ ! -f "${agents_pro_dir}/node_modules/@aipieksel/deepseek-codex-grok-cli-integration/package.json" || ! -f "${agents_pro_dir}/node_modules/@aipieksel/deepseek-microphone-cleanup-integration/package.json" ]]; then
+  printf 'Agents Pro integrations are not installed. Run: %s/script/install-integrations.sh\n' "$launcher_root" >&2
+  exit 1
+fi
+mkdir -p "${state_dir}/profiles/web/node_modules"
+ln -sfn "$agents_pro_dir" "${state_dir}/profiles/web/node_modules/dsh-agents-pro"
+
+printf 'Project: %s\n' "$project_slug"
+printf 'Root:    %s\n' "$project_path"
+printf 'State:   %s\n' "$state_dir"
+printf 'URL:     http://%s:%s/\n' "$host" "$port"
+
+cd "$project_path"
+export DSH_HOME="$state_dir"
+if [[ "$no_token" == "1" ]]; then
+  export DSH_DISABLE_BROWSER_TOKEN=1
+fi
+
+command_args=(web --patch "$agents_pro_patch" --host "$host" --port "$port")
+if [[ "$open_browser" != "1" ]]; then
+  command_args+=(--no-open)
+fi
+if [[ ${#extra_args[@]} -gt 0 ]]; then
+  command_args+=("${extra_args[@]}")
+fi
+
+exec "$dsh_bin" "${command_args[@]}"

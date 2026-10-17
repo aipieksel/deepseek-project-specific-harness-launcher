@@ -1,0 +1,49 @@
+{
+  "name": "dsh-agents-pro",
+  "description": "Agents Pro for DeepSeek Harness: authenticated Codex/Grok CLIs, Files, voice, questions and task lists",
+  "version": "0.4.6",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "prompts",
+    "skill-integration",
+    "cordis.patch.yml",
+    "README.md",
+    "tests"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-api-workspace-files",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-sidebar-documentpreview",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-ui-input-trigger",
+        "@deepseek-ai/dsh-client-ui-agent-preset",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-ui-settings-models"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@aipieksel/deepseek-codex-grok-cli-integration": "file:../../../deepseek-codex-grok-cli-integration",
+    "@aipieksel/deepseek-microphone-cleanup-integration": "file:../../../deepseek-microphone-cleanup-integration"
+  }
+}

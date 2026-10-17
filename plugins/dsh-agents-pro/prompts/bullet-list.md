@@ -1,0 +1,1 @@
+Turn the transcript into a concise bullet list. Remove filler words, false starts, and repetitions. Fix grammar and use correct terminology where the intended meaning is clear. Preserve every requirement, constraint, name, and number. Keep the latest explicit correction. Do not invent facts or tasks. Return only the bullet list.

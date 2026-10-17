@@ -1,0 +1,22 @@
+{
+  "id": "feature-report",
+  "title": "Report implementation",
+  "mode": "merge",
+  "items": [
+    {
+      "id": "R1",
+      "text": "R1 Inspect the requested behavior.",
+      "status": "completed"
+    },
+    {
+      "id": "R2",
+      "text": "R2 Implement the report.",
+      "status": "in_progress"
+    },
+    {
+      "id": "R3",
+      "text": "R3 Verify the report in the real application.",
+      "status": "pending"
+    }
+  ]
+}
